@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# This workflow needs no credentials, so it gets none.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  javascript:
+    name: JavaScript answers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: npm ci
+        working-directory: js
+      - run: npm test
+        working-directory: js
+
+  go:
+    name: Go (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: go/wordfreq
+            ungated: ''
+          - module: chat/backend
+            ungated: cmd/lambda cmd/localserver
+    env:
+      # Build at the version each go.mod declares rather than letting the
+      # toolchain silently download a newer one. The `go` directives are lowered
+      # so a reviewer on an older toolchain is not locked out, and this is where
+      # that claim gets tested.
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          # A glob, not go.sum: go/wordfreq has no dependencies and therefore no
+          # go.sum, and a literal path that does not exist fails the cache step.
+          cache-dependency-path: ${{ matrix.module }}/go.*
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+        working-directory: ${{ matrix.module }}
+      # Tests with a per-package 80% coverage floor. The two cmd/ packages in
+      # chat/backend are reported but not gated: they are process bootstrap
+      # (env reading, lambda.Start, signal handling, ListenAndServe) and are
+      # exercised by the end-to-end suite, which starts the real server. No
+      # honest unit test reaches them. go/wordfreq stays gated even though it is
+      # a package main, because its main() is the answer itself.
+      - name: Test with coverage
+        run: ./scripts/check-go-coverage.sh ${{ matrix.module }} ${{ matrix.ungated }}
+
+  frontend:
+    name: Chat frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: chat/frontend/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          # The e2e suite starts the real Go backend itself, so this job needs a
+          # toolchain even though it is a frontend job.
+          go-version-file: chat/backend/go.mod
+          cache-dependency-path: chat/backend/go.sum
+      - run: npm ci
+        working-directory: chat/frontend
+      - run: npm run type-check
+        working-directory: chat/frontend
+      - run: npm run test:unit
+        working-directory: chat/frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: chat/frontend
+      - run: npm run test:e2e
+        working-directory: chat/frontend
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: chat/frontend/playwright-report
+          # One day, not seven. Any signed-in GitHub user can download a public
+          # repository's artifacts, and secret masking does not apply to their
+          # contents - a report carries screenshots, traces and full request
+          # URLs. It is only ever read to diagnose the run that produced it.
+          retention-days: 1
+
+  policy:
+    name: Policy
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the check reads every commit message, not just the tree.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # --self-test first, so a run that reports "no findings" has just proved
+      # it is still capable of reporting one.
+      - run: ./scripts/policy-check.sh --self-test
+
+  # G2 -- diff shape for the archive directory. The weekly archive job enforces
+  # this on its own commit, but that only binds the automation. This job binds
+  # everyone, so a hand commit cannot use the same door to add an unencrypted
+  # file, a second archive, or an archive bundled with unrelated changes.
+  #
+  # Scoped to commits that touch infra/archives/ at all: every other change is
+  # none of this check's business and passes untouched.
+  archive-shape:
+    name: Archive diff shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: A commit touching infra/archives/ must add exactly one dated .age
+        run: |
+          set -euo pipefail
+          set +x
+          base='${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}'
+          # First push to a branch, or a force-push whose "before" is gone.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)"
+          fi
+
+          changed="$(git diff --name-only "$base" HEAD)"
+          archives="$(printf '%s\n' "$changed" | grep '^infra/archives/' || true)"
+          if [ -z "$archives" ]; then
+            echo "no archive paths touched, nothing to check"
+            exit 0
+          fi
+
+          echo "archive paths touched:"
+          printf '%s\n' "$archives"
+
+          n=$(printf '%s\n' "$archives" | grep -c .)
+          [ "$n" -eq 1 ] || { echo "expected exactly one archive path, got $n" >&2; exit 1; }
+
+          case "$archives" in
+            infra/archives/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].age) ;;
+            *) echo "not a dated .age path" >&2; exit 1 ;;
+          esac
+
+          # Added, never modified or deleted. An archive is immutable once
+          # published: rewriting one would be a claim that the record changed.
+          status="$(git diff --name-status "$base" HEAD -- "$archives" | cut -f1)"
+          [ "$status" = "A" ] || { echo "archive path was $status, expected A" >&2; exit 1; }
+
+          # And nothing else in the same commit, so an archive commit cannot
+          # carry an unrelated change in on its back.
+          others="$(printf '%s\n' "$changed" | grep -v '^infra/archives/' || true)"
+          if [ -n "$others" ]; then
+            echo "archive commit also changed:" >&2
+            printf '%s\n' "$others" >&2
+            exit 1
+          fi
+          echo "ok: exactly one dated archive added, nothing else"
+
+  sql:
+    name: SQL answers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # sqlite3 is preinstalled on ubuntu-latest. The harness runs the three
+      # answer queries against seeded data and diffs the result. The screenshots
+      # in docs/evidence are SQL Server; see sql/test/README.md.
+      - run: ./sql/test/run.sh
+
+  snippets:
+    name: ANSWERS.md snippets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go/wordfreq/go.mod
+          cache-dependency-path: go/wordfreq/go.*
+      # The document promises its code runs as pasted. This runs every fenced
+      # js and go block and diffs against the captured output beneath it.
+      - run: ./scripts/run-answer-snippets.sh
+        env:
+          GOTOOLCHAIN: local
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+        working-directory: infra
+      # -backend=false: the state lives in S3 and this workflow has no
+      # credentials to reach it. validate checks the configuration; it does not
+      # touch the account, and must not need to.
+      - run: terraform init -backend=false
+        working-directory: infra
+      - run: terraform validate
+        working-directory: infra
+
+      # infra/deploy.sh provisions and this workflow only ships code, so the two
+      # cannot be merged: this workflow holds no credentials, so it has nothing
+      # to apply with, and lambda.tf ignores filename changes precisely so a
+      # code push does not fight Terraform. What they do have to agree on is how
+      # artifacts are built and cached, so that much is checked rather than
+      # trusted to stay in step.
+      - name: The manual deploy and this workflow agree on build and cache flags
+        run: |
+          for flag in \
+            'public,max-age=31536000,immutable' \
+            'no-cache' \
+            '-tags lambda.norpc -trimpath -ldflags="-s -w"'; do
+            grep -qF -- "$flag" infra/deploy.sh &&
+              grep -qF -- "$flag" .github/workflows/deploy.yml ||
+              { echo "drifted between infra/deploy.sh and deploy.yml: $flag"; exit 1; }
+          done
