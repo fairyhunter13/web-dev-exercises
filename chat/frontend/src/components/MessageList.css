@@ -1,0 +1,99 @@
+.wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.list {
+  height: 100%;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.75rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.msg {
+  /* Block, not inline: FLIP transforms do not apply to inline elements. */
+  display: flex;
+  flex-direction: column;
+  align-self: flex-start;
+  max-width: 78%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  background: var(--bubble);
+  overflow-wrap: anywhere;
+}
+
+.msg.mine {
+  align-self: flex-end;
+  background: var(--bubble-mine);
+}
+
+/* An unconfirmed optimistic message, until the server echo replaces it. */
+.msg.pending {
+  opacity: 0.6;
+}
+
+.author {
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.time {
+  font-size: 0.68rem;
+  opacity: 0.5;
+  align-self: flex-end;
+}
+
+/* transform and opacity only, so the animation runs on the compositor and
+   never touches layout or the main thread. */
+.msg-enter-active,
+.msg-leave-active,
+.msg-move {
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease;
+}
+
+.msg-enter-from {
+  opacity: 0;
+  transform: translateY(1rem) scale(0.98);
+}
+
+.msg-leave-to {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+}
+
+/* Mandatory. Without taking the leaving element out of flow, the surviving
+   messages snap to their new positions instead of sliding. */
+.msg-leave-active {
+  position: absolute;
+  width: 100%;
+}
+
+.pill {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.35rem 0.8rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-enter-active,
+  .msg-leave-active,
+  .msg-move {
+    transition-duration: 1ms;
+  }
+}

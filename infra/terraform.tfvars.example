@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+# Address that receives the budget alert.
+budget_email = "you@example.com"
+
+# Named profile in ~/.aws/config. Must not be "default".
+aws_profile = "chat-demo"
+
+# region           = "ap-southeast-1"
+# name_prefix      = "chat"
+# budget_limit_usd = "5"

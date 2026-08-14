@@ -1,0 +1,34 @@
+:root {
+  --panel: #ffffff;
+  --border: #e5e7eb;
+  --bubble: #f1f5f9;
+  --bubble-mine: #dbeafe;
+  --accent: #2563eb;
+  --muted: #94a3b8;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --panel: #0f172a;
+    --border: #1e293b;
+    --bubble: #1e293b;
+    --bubble-mine: #1d4ed8;
+    --accent: #3b82f6;
+    --muted: #64748b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  background: var(--panel);
+}

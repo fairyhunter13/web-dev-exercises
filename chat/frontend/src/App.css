@@ -1,0 +1,120 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 46rem;
+  margin: 0 auto;
+  background: var(--panel);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.bar h1 {
+  font-size: 1rem;
+  margin: 0;
+  flex: 1;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status[data-status='open'] .dot {
+  background: #22c55e;
+}
+
+.status[data-status='reconnecting'] .dot,
+.status[data-status='connecting'] .dot {
+  background: #f59e0b;
+}
+
+.status[data-status='failed'] .dot,
+.status[data-status='closed'] .dot {
+  background: #ef4444;
+}
+
+.name input {
+  width: 7rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: inherit;
+}
+
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.composer input {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.composer button,
+.retry {
+  padding: 0.6rem 1.1rem;
+  border: none;
+  border-radius: 0.6rem;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.retry {
+  margin: 0 0.75rem;
+}
+
+.error {
+  margin: 0;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+/* Visually hidden but still announced. A label removed with display:none is
+   removed from the accessibility tree too. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
