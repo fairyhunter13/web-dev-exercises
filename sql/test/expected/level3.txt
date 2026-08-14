@@ -1,0 +1,4 @@
+CustomerName|OrderCount|FirstOrder|LastOrder
+Same Name Co|6|2024-06-01|2024-06-06
+Zeta Co|5|2024-04-01|2024-04-05
+Same Name Co|5|2024-02-01|2024-02-05

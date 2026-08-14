@@ -1,0 +1,40 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Terraform
+# .terraform.lock.hcl is committed on purpose: it pins provider hashes so a
+# later apply cannot silently pull a different provider build.
+infra/.terraform/
+infra/build/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+
+# Never commit credentials or a deployed WebSocket URL that outlives the stack
+.env
+.env.local
+
+# Raw capture recordings; docs/demo.gif is the committed artifact.
+docs/evidence/video/
+
+# The weekly CI archive commit lands exactly one file here: a date-named age
+# ciphertext. Everything else dropped in this directory stays ignored, so a
+# stray plaintext staging file cannot be committed by accident -- the archive's
+# plaintext carries the AWS account ID 203 times and structurally cannot be
+# sanitised, so encryption is the only thing protecting it.
+#
+# The directory itself must not be ignored or the negation below could never
+# match; git does not descend into an ignored directory to re-include a child.
+infra/archives/*
+!infra/archives/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].age
+
+# Teardown run output, local only. The marker records an archive path, the
+# destroy log names every resource it deleted, and the cost record is a run
+# artefact rather than source.
+infra/.teardown-complete
+infra/destroy.log
+infra/cost-record.txt

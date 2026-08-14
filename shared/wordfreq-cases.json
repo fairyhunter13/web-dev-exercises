@@ -1,0 +1,102 @@
+[
+  {
+    "name": "the string from the question",
+    "input": "Four, One two two three Three three four  four   four",
+    "want": {
+      "one": 1,
+      "two": 2,
+      "three": 3,
+      "four": 4
+    }
+  },
+  {
+    "name": "empty input",
+    "input": "",
+    "want": {}
+  },
+  {
+    "name": "whitespace only",
+    "input": "   \t\n ",
+    "want": {}
+  },
+  {
+    "name": "punctuation only",
+    "input": "!!! ... ,,,",
+    "want": {}
+  },
+  {
+    "name": "apostrophes only",
+    "input": "''' ’’",
+    "want": {}
+  },
+  {
+    "name": "case insensitive",
+    "input": "Go GO go gO",
+    "want": {
+      "go": 4
+    }
+  },
+  {
+    "name": "apostrophes kept inside a word, trimmed at the edges",
+    "input": "don't Don't 'dont'",
+    "want": {
+      "don't": 2,
+      "dont": 1
+    }
+  },
+  {
+    "name": "the curly apostrophe counts as an apostrophe",
+    "input": "don’t ’don’t’",
+    "want": {
+      "don’t": 2
+    }
+  },
+  {
+    "name": "a word may start with a digit",
+    "input": "3rd place 4Ever",
+    "want": {
+      "3rd": 1,
+      "place": 1,
+      "4ever": 1
+    }
+  },
+  {
+    "name": "digits count as word characters",
+    "input": "123 go1 1go go1",
+    "want": {
+      "123": 1,
+      "go1": 2,
+      "1go": 1
+    }
+  },
+  {
+    "name": "non-ASCII letters, precomposed as U+00E9",
+    "input": "Café café CAFÉ",
+    "want": {
+      "café": 3
+    }
+  },
+  {
+    "name": "non-ASCII letters, decomposed as e plus U+0301",
+    "input": "Café café",
+    "want": {
+      "café": 2
+    }
+  },
+  {
+    "name": "lowercasing does not fold the German sharp s",
+    "input": "Straße straße STRASSE",
+    "want": {
+      "straße": 2,
+      "strasse": 1
+    }
+  },
+  {
+    "name": "letters outside the basic plane are letters",
+    "input": "𐐀𐐩 abc",
+    "want": {
+      "𐐨𐐩": 1,
+      "abc": 1
+    }
+  }
+]

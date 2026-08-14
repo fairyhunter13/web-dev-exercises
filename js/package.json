@@ -1,0 +1,12 @@
+{
+  "name": "web-dev-exercises-js",
+  "private": true,
+  "description": "JavaScript answers for a developer pre-screening test",
+  "scripts": {
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.10",
+    "vitest": "^4.1.10"
+  }
+}
