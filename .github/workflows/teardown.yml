@@ -1,0 +1,201 @@
+name: Teardown
+
+# Daily, because the two triggers this watches for - the free plan's expiry date
+# and the credit floor - are not both on a calendar. Credits can run out at any
+# hour, and a weekly check could miss the account by six days.
+#
+# 03:17 UTC, not on the hour. GitHub documents scheduled workflows as delayed or
+# dropped under load, and load concentrates at :00.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+# Read-only by default. The one job that needs to write says so itself.
+permissions:
+  contents: read
+
+concurrency:
+  group: teardown
+  cancel-in-progress: false
+
+jobs:
+  # -------------------------------------------------------------------- archive
+  #
+  # Commits a weekly encrypted archive of the account's records. This replaces
+  # the old `keepalive` job rather than sitting beside it: the archive commit is
+  # itself the dated repository activity that kept the 60-day scheduled-workflow
+  # window open, so keeping both would push two commits to do one job.
+  #
+  # Why commit it at all, when this script's own header says nothing produced
+  # here is committed: a laptop-produced archive that only the laptop holds dies
+  # with the laptop. Committing it is the only off-machine copy that does not
+  # depend on an account or a subscription staying alive. The cost is real and
+  # permanent - every push is mirrored to public archives within the hour, so the
+  # public record will show this repository receiving a dated encrypted blob on a
+  # fixed cadence forever - and it is accepted knowingly. It is survivable only
+  # because the plaintext never leaves the runner and the ciphertext is X25519,
+  # with no passphrase to grind offline. archive.sh asserts that (G3).
+  #
+  # Gated on the age of the newest committed archive, not on a weekday. The old
+  # keepalive job made this argument and it holds here unchanged: a weekday gate
+  # fires on exactly one run and is simply missed if that run is delayed or
+  # dropped, which GitHub documents as normal under load, whereas an age gate
+  # stays true until it is satisfied so the next daily run catches up. The
+  # observable cadence is still weekly.
+  #
+  # The commit message is a bare date with nothing interpolated into it. A commit
+  # message is the least revocable thing this repository emits.
+  archive:
+    name: Commit the weekly records archive
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    environment:
+      name: teardown
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Decide whether an archive is due
+        id: due
+        run: |
+          set -euo pipefail
+          set +x
+          newest=$(ls infra/archives/*.age 2>/dev/null | sort | tail -1 || true)
+          if [ -z "$newest" ]; then
+            echo "no archive committed yet"
+            echo "due=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The filename is the date, so the age comes from the name rather than
+          # from commit metadata, which a rebase or a squash would rewrite.
+          stamp=$(basename "$newest" .age)
+          age=$(( ( $(date -u +%s) - $(date -u -d "$stamp" +%s) ) / 86400 ))
+          echo "newest archive is $age day(s) old"
+          [ "$age" -ge 7 ] && echo "due=1" >> "$GITHUB_OUTPUT" || echo "due=0" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.due.outputs.due == '1'
+        with:
+          terraform_version: 1.9.8
+          # Same reason as the check job: the wrapper rewrites stdout to add
+          # ::debug:: annotations, putting Terraform's output through a second
+          # path this repository has not audited.
+          terraform_wrapper: false
+
+      - name: Install age
+        if: steps.due.outputs.due == '1'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        if: steps.due.outputs.due == '1'
+        with:
+          role-to-assume: ${{ secrets.TEARDOWN_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      # --records-only: the build artifacts are ~8.7 MB of rebuildable Go binary
+      # against ~12 KB of records that are not rebuildable. Committing the binary
+      # weekly would add ~450 MB/yr of unshrinkable history for nothing.
+      #
+      # The gates live inside archive.sh, not here, so they can be tested without
+      # GitHub in the loop: `./infra/archive.sh --self-test`.
+      - name: Produce the archive
+        if: steps.due.outputs.due == '1'
+        working-directory: infra
+        run: ./archive.sh --records-only --out archives
+
+      - name: Commit it
+        if: steps.due.outputs.due == '1'
+        run: |
+          set -euo pipefail
+          set +x
+          # .gitignore admits only infra/archives/YYYY-MM-DD.age, so `git add`
+          # on the directory cannot pick up a stray staging file. Verify the
+          # staged set anyway - a gate that is only load-bearing when another
+          # gate already held is not a gate.
+          git add infra/archives/
+          staged=$(git diff --cached --name-only)
+          count=$(printf '%s\n' "$staged" | grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "expected exactly one staged path, got $count" >&2
+            exit 1
+          fi
+          case "$staged" in
+            infra/archives/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].age) ;;
+            *) echo "staged path is not a dated archive" >&2; exit 1 ;;
+          esac
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "$(date -u +%F)"
+          git push origin HEAD:main
+
+  # ---------------------------------------------------------------------- check
+  #
+  # Runs every time, and does nothing on almost all of them. check-expiry.sh is
+  # fail-closed: an API error, an unparseable date or an empty response all mean
+  # "not yet", and only an explicitly parsed value that satisfies a trigger runs
+  # teardown.sh. So the teardown step is not a separate gate here - the gate is
+  # inside the script, where it can be tested without GitHub in the loop.
+  #
+  # The `teardown` environment carries no required reviewers, deliberately: a
+  # scheduled run is nobody's foreground task, and an approval gate would mean
+  # the account expires with the stack still standing. The environment is here
+  # because the OIDC trust policy pins the sub claim to it (infra/teardown.tf).
+  #
+  # After a successful teardown there is nothing left to authenticate against
+  # and this job will fail daily. That is the point at which the workflow should
+  # be disabled by hand; it cannot disable itself without a token that can
+  # rewrite workflows, which is a worse thing to hold than a few failing runs.
+  check:
+    name: Check the account, tear down if it is time
+    runs-on: ubuntu-latest
+    environment:
+      name: teardown
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: chat/backend/go.mod
+          cache-dependency-path: chat/backend/go.sum
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          # The wrapper rewrites stdout to add ::debug:: annotations, which puts
+          # Terraform's output through a second path that this repository has
+          # not audited. teardown.sh redirects the destroy to a file precisely
+          # so it stays out of the log; the wrapper would undo that.
+          terraform_wrapper: false
+
+      # teardown.sh will not destroy anything it could not archive first, and
+      # the archive is age-encrypted, so the binary has to be here before the
+      # gate rather than discovered missing halfway through.
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.TEARDOWN_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      # No arguments: check-expiry.sh decides, and runs teardown.sh itself when
+      # a trigger fires. Nothing is uploaded as an artifact from this job - the
+      # archive, the destroy log and the cost record are all local by design.
+      #
+      # Which means the archive teardown.sh writes here is discarded with the
+      # runner. That is deliberate and it is worth being clear about: in CI the
+      # archive is a *gate*, not a backup - proof that the state was readable,
+      # decryptable and complete before anything was destroyed. The backup is
+      # the one infra/deliver.sh writes daily to a local disk, so the record is
+      # at most a day behind the account at the moment it dies. Uploading the
+      # real one from here would mean putting it on a public repository's
+      # artifact storage, which is the thing this whole arrangement avoids.
+      - name: check-expiry
+        working-directory: infra
+        run: ./check-expiry.sh
